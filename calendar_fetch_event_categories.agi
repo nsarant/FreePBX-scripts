@@ -1,0 +1,61 @@
+#!/usr/bin/env php
+<?php
+//
+// SCRIPT THAT RETURNS THE CALENDAR EVENT DESCRIPTIONS FOR CURRENT DATE.
+// MEANT TO BE USED AS AGI SCRIPT IN FREEPBX MODULE "DYNAMIC ROUTES".
+// RETURNING VARIABLE IS category.
+//
+use om\IcalParser;
+require_once '/var/www/html/admin/modules/calendar/vendor/autoload.php';
+
+include_once('/etc/freepbx.conf');
+$agidir = FreePBX::Config()->get('ASTAGIDIR');
+require_once $agidir."/phpagi.php";
+$AGI = new AGI();
+
+$CALENDAR_NAME = $argv[1];
+$CALENDAR_SQL = "select kvstore_FreePBX_modules_Calendar.key from kvstore_FreePBX_modules_Calendar where val like \"%$CALENDAR_NAME%\"";
+
+global $db; // DATABASE OBJECT FROM BOOSTRAP
+$sql = "select val from kvstore_FreePBX_modules_Calendar where id like 'calendar-raw' AND kvstore_FreePBX_modules_Calendar.key like ($CALENDAR_SQL)";
+$calendars = $db->getAll($sql, DB_FETCHMODE_ASSOC);
+
+//
+// POPULATE IcalParser->data VARIABLE IN ORDER TO LATE RESTRIEVE EVENT DESCRIPTIONS LATER BY USING getEvents()
+//
+$counter = 0;
+foreach ($calendars as $calendar_data) {
+    $parsers[$counter] = new IcalParser;
+    $parsers[$counter]->data = $parsers[$counter]->parseString($calendar_data["val"]);
+    $counter++;
+}
+
+//
+// AT THIS POINT WE BUILD A COMMA-SEPARATED STRING WITH ALL THE EVENT DESCRIPTIONS FOR TODAY AND STORE IT TO $agi_output_value.
+//
+$event_categories = [];
+foreach ($parsers as $calendar) {
+    foreach ($calendar->getEvents() as $event) {
+        $now = date('Y-m-d\TH:i:s.u');
+        if (($now > $event["DTSTART"]->format('Y-m-d\TH:i:s.u')) && ($now < $event["DTEND"]->format('Y-m-d\TH:i:s.u'))) {
+            foreach ($event["CATEGORIES"] as $category) {
+                if ($category != "") {
+                    array_push($event_categories,$category);
+                }
+            }
+            $agi_output_value = implode(",",$event_categories);
+        }
+    }
+}
+
+//
+// AGI RETURN category WITH VALUE OF $agi_output_value
+//
+$AGI->verbose("===========================");
+$AGI->verbose("test-script.agi starting up...");
+$AGI->verbose("===========================");
+$AGI->verbose("Category is ".$agi_output_value.".");
+$AGI->verbose("===========================");
+$AGI->set_variable("category",$agi_output_value);
+
+exit;
